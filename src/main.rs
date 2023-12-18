@@ -18,7 +18,6 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::Router;
 use axum::routing::get;
-use axum::ServiceExt;
 use bytes::Bytes;
 use dotenv::dotenv;
 use futures::{SinkExt, StreamExt};
@@ -32,6 +31,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tower::{BoxError, ServiceBuilder};
+use tower::limit::ConcurrencyLimitLayer;
 use tower_governor::errors::display_error;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::GovernorLayer;
@@ -178,7 +178,7 @@ async fn handle_request(
             {
                 callbacks.write().await.remove(&id);
             }
-            R::error(-1, "Timeout".into())
+            R::error(-1, "Read timeout".into())
         }
     }
 }
@@ -209,7 +209,7 @@ fn handle_panic(err: Box<dyn Any + Send + 'static>) -> http::Response<Full<Bytes
     } else if let Some(s) = err.downcast_ref::<&str>() {
         s.to_string()
     } else {
-        "Unknown panic message".to_string()
+        "Unknown error".to_string()
     };
 
     let body = R::error(-1, details);
@@ -242,7 +242,7 @@ async fn main() {
         .route("/", get(|| async { "Hello, Atomicals!" }))
         .route("/proxy", get(handle_proxy).post(handle_proxy))
         .route("/proxy/:method", get(handle_get).post(handle_post))
-        .route_layer(
+        .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(|e: BoxError| async move {
                     display_error(e)
@@ -251,17 +251,24 @@ async fn main() {
                 .layer(TraceLayer::new_for_http())
                 .layer(GovernorLayer {
                     config: Box::leak(governor_conf),
-                }),
+                })
         )
+        .layer(ConcurrencyLimitLayer::new(
+            env::var("CONCURRENCY_LIMIT").unwrap_or("500".to_string()).parse().unwrap(),
+        ))
         .layer(CorsLayer::permissive())
         .layer(Extension(callbacks.clone()))
-        .layer(Extension(ws_tx.clone()))
-        ;
+        .layer(Extension(ws_tx.clone()));
+
     tokio::spawn(async move {
+        let wss_var = env::var("ELECTRUMX_WSS").unwrap_or("wss://electrumx.atomicals.xyz:50012".to_string());
+        let list = wss_var.split(',').collect::<Vec<&str>>();
+        info!("ElectrumX WSS: {:?}", &list);
+        let mut index = 0;
         loop {
-            let wss = env::var("ELECTRUMX_WSS").unwrap_or("wss://electrumx.atomicals.xyz:50012".to_string());
+            let wss = list.get(index).unwrap();
             info!("Try to connect to electrumx: {}", &wss);
-            match connect_async(wss).await {
+            match connect_async(*wss).await {
                 Ok((ws, _)) => {
                     info!("Connected to electrumx");
                     let (mut write, mut read) = ws.split();
@@ -290,16 +297,20 @@ async fn main() {
                 }
                 Err(e) => {
                     error!("Failed to connect to electrumx: {:?}", e);
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    tokio::time::sleep(Duration::from_secs(3)).await;
                 }
+            }
+            if index >= list.len() - 1 {
+                index = 0;
+            } else {
+                index += 1;
             }
         }
     });
-    let app_api = env::var("APP_API").unwrap_or("0.0.0.0:12321".to_string());
+    let app_api = env::var("PROXY_HOST").unwrap_or("0.0.0.0:12321".to_string());
     let listener = tokio::net::TcpListener::bind(&app_api)
         .await
         .unwrap();
-    info!("listening on {}", &app_api);
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .await.unwrap();
+    info!("Listening on {}", &app_api);
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }
