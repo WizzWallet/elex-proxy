@@ -94,9 +94,9 @@ jobs:
             name: elex-proxy-Darwin-aarch64.tar.gz
             skip_tests: true
         toolchain:
-          - stable
+#          - stable
 #          - beta
-#          - nightly
+          - nightly
     steps:
       - uses: actions/checkout@v3
       - name: Cache cargo & target directories
@@ -129,26 +129,18 @@ jobs:
             tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
           fi
           cd -
-        if: |
-          matrix.toolchain == 'stable' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
+        if: startsWith( github.ref, 'refs/tags/v' )
       - name: Publish release artifacts
         uses: actions/upload-artifact@v3
         with:
           name: elex-proxy-${{ matrix.platform.os_name }}
           path: "elex-proxy-*"
-        if: matrix.toolchain == 'stable' && github.ref == 'refs/tags/test-release'
       - name: Generate SHA-256
         run: shasum -a 256 ${{ matrix.platform.name }}
-        if: |
-          matrix.toolchain == 'stable' &&
-          matrix.platform.os == 'macOS-latest' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
+        if: matrix.platform.os == 'macOS-latest' && startsWith( github.ref, 'refs/tags/v' )
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
           draft: true
           files: "elex-proxy-*"
-        if: matrix.toolchain == 'stable' && startsWith( github.ref, 'refs/tags/v' )
+        if: startsWith( github.ref, 'refs/tags/v' )

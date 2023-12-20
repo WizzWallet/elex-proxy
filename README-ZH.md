@@ -1,9 +1,9 @@
 ### EleX Proxy ( [English](README.md) | 中文文档 )
 
 ![GitHub release (with filter)](https://img.shields.io/github/v/release/AstroxNetwork/elex-proxy)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AstroxNetwork/elex-proxy/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**EleX Proxy** 代理是一个轻量级的 Rust 实现，用于代理与 [ElectrumX](https://github.com/atomicals/atomicals-electrumx) 服务器的通信。该项目旨在为处理 ElectrumX 请求提供简单而高效的解决方案。
+**EleX Proxy** 代理是一个轻量级的 Rust 实现，用于代理与 [Atomicals ElectrumX](https://github.com/atomicals/atomicals-electrumx) 服务器的通信。该项目旨在为处理 ElectrumX 请求提供简单而高效的解决方案。
 
 #### 安装
 
@@ -26,6 +26,8 @@ IP_LIMIT_PER_SECOND=1
 IP_LIMIT_BURST_SIZE=10
 # 默认 500，最大并发连接数
 CONCURRENCY_LIMIT=500
+# 默认 10，接收 WebSocket 消息的超时时间
+RESPONSE_TIMEOUT=10
 RUST_LOG=info
 ```
 
@@ -34,8 +36,9 @@ RUST_LOG=info
 - `PROXY_HOST`：代理服务器监听的主机和端口。
 - `ELECTRUMX_WSS`：要连接的 ElectrumX 服务器。使用逗号分隔多个服务器。
 - `IP_LIMIT_PER_SECOND`：间隔几秒添加新的容量。
-- `IP_LIMIT_BURST_SIZE`：如果在 `IP_LIMIT_PER_SECOND` 设置的时间内突发超过这个值，将会被限制
+- `IP_LIMIT_BURST_SIZE`：如果在 `IP_LIMIT_PER_SECOND` 设置的时间内突发超过这个值，将会被限制。
 - `CONCURRENCY_LIMIT`：允许的最大并发连接数。
+- `RESPONSE_TIMEOUT`：接收 WebSocket 消息的超时时间。
 - `RUST_LOG`：Rust 日志框架的日志级别。选项包括 `trace`、`debug`、`info`、`warn` 和 `error`。
 
 #### 使用
@@ -44,6 +47,6 @@ RUST_LOG=info
 
 ### 许可
 
-本项目采用 MIT 许可证 - 有关详细信息，请参阅 [LICENSE](https://github.com/atomicals/electrumx-proxy/blob/main/LICENSE) 文件。
+本项目采用 MIT 许可证 - 有关详细信息，请参阅 [LICENSE](LICENSE) 文件。
 
 **注意：** 建议审查并根据您的特定需求定制配置。
