@@ -121,9 +121,18 @@ async fn handle_get(
     Path(method): Path<String>,
     Query(query): Query<Value>,
 ) -> Result<R, AppError> {
-    let x = query.get("params").unwrap().as_str().unwrap();
-    let params = serde_json::from_str(x).unwrap();
-    let r = handle_request(method, params, callbacks, ws_tx).await;
+    let r = match query.get("params") {
+        None => handle_request(method, vec![], callbacks, ws_tx).await,
+        Some(v) => {
+            let x = v.as_str().map(|s| if s.is_empty() {
+                "[]"
+            } else {
+                s
+            }).unwrap();
+            let params = serde_json::from_str(x).unwrap();
+            handle_request(method, params, callbacks, ws_tx).await
+        }
+    };
     Ok(r)
 }
 
@@ -131,10 +140,20 @@ async fn handle_post(
     Extension(callbacks): Extension<Callbacks>,
     Extension(ws_tx): Extension<mpsc::UnboundedSender<Message>>,
     Path(method): Path<String>,
-    Json(body): Json<Value>,
+    body: Option<Json<Value>>,
 ) -> Result<R, AppError> {
-    let x = body.get("params").unwrap().as_array().unwrap();
-    let r = handle_request(method, x.clone(), callbacks, ws_tx).await;
+    let r = match body {
+        None => handle_request(method, vec![], callbacks, ws_tx).await,
+        Some(v) => {
+            match v.0.get("params") {
+                None => handle_request(method, vec![], callbacks, ws_tx).await,
+                Some(v) => {
+                    let x = v.as_array().unwrap();
+                    handle_request(method, x.clone(), callbacks, ws_tx).await
+                }
+            }
+        }
+    };
     Ok(r)
 }
 
