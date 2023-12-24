@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -46,14 +46,14 @@ use tracing::{error, info, warn};
 struct JsonRpcRequest {
     method: String,
     params: Vec<Value>,
-    id: u64,
+    id: u32,
 }
 
 #[derive(Deserialize)]
 struct JsonRpcResponse {
     result: Option<Value>,
     error: Option<Value>,
-    id: u64,
+    id: u32,
 }
 
 #[derive(Serialize)]
@@ -99,7 +99,6 @@ impl R {
     }
 }
 
-static ID_COUNTER: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 
 static IP_LIMIT_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
     env::var("IP_LIMIT_PER_SECOND").unwrap_or("1".to_string()).parse().unwrap()
@@ -125,23 +124,25 @@ static RESPONSE_TIMEOUT: LazyLock<u64> = LazyLock::new(|| {
     env::var("RESPONSE_TIMEOUT").unwrap_or("10".to_string()).parse().unwrap()
 });
 
-fn get_next_id() -> u64 {
+
+// The use of `AtomicU32` is to ensure not exceeding the integer range of other systems.
+static ID_COUNTER: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
+
+fn get_next_id() -> u32 {
+    // Reset the counter when it reaches the maximum value.
+    if ID_COUNTER.load(Ordering::SeqCst) == u32::MAX {
+        ID_COUNTER.store(0, Ordering::SeqCst);
+    }
     ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
-type Callbacks = Arc<RwLock<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>>;
+type Callbacks = Arc<RwLock<HashMap<u32, oneshot::Sender<JsonRpcResponse>>>>;
 
 struct AppError(anyhow::Error);
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let value = R {
-            success: false,
-            code: None,
-            message: Some(Value::String(self.0.to_string())),
-            response: None,
-            health: None,
-        };
+        let value = R::error(-1, self.0.to_string());
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(Body::from(serde_json::to_string(&value).unwrap()))
