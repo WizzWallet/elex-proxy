@@ -1,0 +1,11 @@
+version: '3'
+services:
+  proxy:
+    image: elex-proxy
+    build: .
+    restart: always
+    ports:
+      - 12321:12321
+    env_file:
+      - .env
+
