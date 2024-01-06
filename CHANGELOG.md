@@ -1,3 +1,11 @@
+## 0.1.4
+
+- About write task when connection closed.
+
+## 0.1.3
+
+- Improve reconnect & code structure.
+
 ## 0.1.2
 
 - Add `/proxy/health`.
