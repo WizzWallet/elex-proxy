@@ -1,7 +1,5 @@
 #![feature(lazy_cell)]
 
-mod urn;
-
 use std::any::Any;
 use std::collections::HashMap;
 use std::env;
@@ -43,6 +41,8 @@ use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
+
+mod urn;
 
 #[derive(Serialize)]
 struct JsonRpcRequest {
@@ -370,11 +370,11 @@ async fn main() {
             let wss = list.get(index).unwrap();
             info!("Try to connect to ElectrumX: {}", &wss);
             match connect_async(*wss).await {
-                Ok((ws,_)) => {
+                Ok((ws, _)) => {
                     info!("Connected to ElectrumX: {}", &wss);
                     let (mut write, mut read) = ws.split();
                     let ws_rx_stream = Arc::clone(&ws_rx_stream);
-                    tokio::spawn(async move {
+                    let send_handle = tokio::spawn(async move {
                         let mut guard = ws_rx_stream.lock().await;
                         while let Some(message) = guard.next().await {
                             let request_text = serde_json::to_string(&message).unwrap();
@@ -401,6 +401,10 @@ async fn main() {
                             }
                         } else if msg.is_close() {
                             warn!("Connection closed: {}", &wss);
+                            // Close the send handle to stop the send task.
+                            if !send_handle.is_finished() {
+                                send_handle.abort();
+                            }
                             break;
                         }
                     }
