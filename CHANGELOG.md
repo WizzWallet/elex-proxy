@@ -1,3 +1,7 @@
+## 0.1.5
+
+- Allow configuring the number of concurrently running WebSocket instances to improve throughput.
+
 ## 0.1.4
 
 - About write task when connection closed.
