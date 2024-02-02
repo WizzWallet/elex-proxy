@@ -20,10 +20,14 @@
 PROXY_HOST=0.0.0.0:12321
 # 默认 wss://electrumx.atomicals.xyz:50012，使用逗号分隔多个服务器
 ELECTRUMX_WSS=wss://electrumx.atomicals.xyz:50012
-# 默认 1, 间隔几秒添加新的容量
-IP_LIMIT_PER_SECOND=1
-# 默认 10，如果在 IP_LIMIT_PER_SECOND 设置的时间内突发超过这个值，将会被限制
+# 默认 1, 每 xx 秒添加1个允许访问数
+# IP_LIMIT_PER_SECOND=1
+# 默认 10, 每 xx 毫秒添加1个允许访问数
+IP_LIMIT_PER_MILLS=1
+# 默认 10，如果这个值被用完，新的访问将会被限制。
 IP_LIMIT_BURST_SIZE=10
+# 默认 1, 同时运行的 ws 实例，可以提高吞吐量，按需设置
+ELECTRUMX_WS_INSTANCE=5
 # 默认 500，最大并发连接数
 CONCURRENCY_LIMIT=500
 # 默认 10，接收 WebSocket 消息的超时时间
@@ -35,8 +39,10 @@ RUST_LOG=info
 
 - `PROXY_HOST`：代理服务器监听的主机和端口。
 - `ELECTRUMX_WSS`：要连接的 ElectrumX 服务器。使用逗号分隔多个服务器。
-- `IP_LIMIT_PER_SECOND`：间隔几秒添加新的容量。
-- `IP_LIMIT_BURST_SIZE`：如果在 `IP_LIMIT_PER_SECOND` 设置的时间内突发超过这个值，将会被限制。
+- `IP_LIMIT_PER_SECOND`：xx秒添加1个允许访问数。
+- `IP_LIMIT_PER_MILLS`：xx毫秒添加1个允许访问数。
+- `IP_LIMIT_BURST_SIZE`：如果这个值被用完，新的访问将会被限制。
+- `ELECTRUMX_WS_INSTANCE`：同时运行的 ws 实例，可以提高吞吐量，按需设置。
 - `CONCURRENCY_LIMIT`：允许的最大并发连接数。
 - `RESPONSE_TIMEOUT`：接收 WebSocket 消息的超时时间。
 - `RUST_LOG`：Rust 日志框架的日志级别。选项包括 `trace`、`debug`、`info`、`warn` 和 `error`。
