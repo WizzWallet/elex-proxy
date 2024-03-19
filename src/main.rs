@@ -2,47 +2,57 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::env;
 use std::net::SocketAddr;
-use std::sync::{Arc, LazyLock};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{Path, Query};
 use axum::extract::Extension;
 use axum::extract::Json;
+use axum::extract::{Path, Query};
 use axum::http;
-use axum::http::{header, HeaderMap};
 use axum::http::StatusCode;
+use axum::http::{header, HeaderMap};
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum::Router;
 use axum::routing::get;
+use axum::Router;
 use bytes::Bytes;
 use dotenv::dotenv;
 use futures::{SinkExt, StreamExt};
 use http_body_util::Full;
+use moka::future::Cache;
 use once_cell::sync::Lazy;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Number, Value};
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::GovernorLayer;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
+use tower_governor::GovernorLayer;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
+use crate::cache::to_cache_key;
+use crate::envs::{
+    CACHE_TIME_TO_IDLE, CACHE_TIME_TO_LIVE, CONCURRENCY_LIMIT, ELECTRUMX_WSS,
+    ELECTRUMX_WS_INSTANCE, IP_LIMIT_BURST_SIZE, IP_LIMIT_PER_MILLS, MAX_CACHE_ENTRIES, PROXY_HOST,
+    RESPONSE_TIMEOUT,
+};
 use crate::ip::maybe_ip_from_headers;
+use crate::urn::{handle_urn, handle_urn_with_res};
 
+mod cache;
+mod envs;
 mod ip;
 mod urn;
 
@@ -60,7 +70,7 @@ struct JsonRpcResponse {
     id: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct R {
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,56 +113,6 @@ impl R {
     }
 }
 
-static IP_LIMIT_PER_MILLS: LazyLock<u64> = LazyLock::new(|| {
-    let per_second:u64 = env::var("IP_LIMIT_PER_SECOND")
-        .unwrap_or("0".to_string())
-        .parse()
-        .unwrap();
-    if per_second > 0 {
-        per_second * 1000
-    } else {
-        env::var("IP_LIMIT_PER_MILLS")
-            .unwrap_or("10".to_string())
-            .parse()
-            .unwrap()
-    }
-});
-
-static IP_LIMIT_BURST_SIZE: LazyLock<u32> = LazyLock::new(|| {
-    env::var("IP_LIMIT_BURST_SIZE")
-        .unwrap_or("10".to_string())
-        .parse()
-        .unwrap()
-});
-
-static CONCURRENCY_LIMIT: LazyLock<usize> = LazyLock::new(|| {
-    env::var("CONCURRENCY_LIMIT")
-        .unwrap_or("500".to_string())
-        .parse()
-        .unwrap()
-});
-
-static ELECTRUMX_WSS: LazyLock<String> = LazyLock::new(|| {
-    env::var("ELECTRUMX_WSS").unwrap_or("wss://electrumx.atomicals.xyz:50012".to_string())
-});
-
-static ELECTRUMX_WS_INSTANCE: LazyLock<u32> = LazyLock::new(|| {
-    env::var("ELECTRUMX_WS_INSTANCE")
-        .unwrap_or("1".to_string())
-        .parse()
-        .unwrap()
-});
-
-static PROXY_HOST: LazyLock<String> =
-    LazyLock::new(|| env::var("PROXY_HOST").unwrap_or("0.0.0.0:12321".into()));
-
-static RESPONSE_TIMEOUT: LazyLock<u64> = LazyLock::new(|| {
-    env::var("RESPONSE_TIMEOUT")
-        .unwrap_or("10".to_string())
-        .parse()
-        .unwrap()
-});
-
 // The use of `AtomicU32` is to ensure not exceeding the integer range of other systems.
 static ID_COUNTER: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
 
@@ -185,7 +145,8 @@ impl IntoResponse for R {
 }
 
 async fn handle_get(
-    Extension(callbacks): Extension<Vec<(mpsc::UnboundedSender<JsonRpcRequest>, Callbacks)>>,
+    Extension(callbacks): Extension<Vec<(UnboundedSender<JsonRpcRequest>, Callbacks)>>,
+    Extension(cache): Extension<MokaCache>,
     headers: HeaderMap,
     Path(method): Path<String>,
     Query(query): Query<Value>,
@@ -194,29 +155,30 @@ async fn handle_get(
     let sender = item.0.clone();
     let calls = item.1.clone();
     let r = match query.get("params") {
-        None => handle_request(sender, calls, headers, method, vec![]).await,
+        None => handle_request(cache, sender, calls, headers, method, vec![]).await,
         Some(v) => {
             let x = v
                 .as_str()
                 .map(|s| if s.is_empty() { "[]" } else { s })
                 .unwrap();
             let params = serde_json::from_str(x).unwrap();
-            handle_request(sender, calls, headers, method, params).await
+            handle_request(cache, sender, calls, headers, method, params).await
         }
     };
     Ok(r)
 }
 
 fn random_callback(
-    callbacks: &[(mpsc::UnboundedSender<JsonRpcRequest>, Callbacks)],
-) -> &(mpsc::UnboundedSender<JsonRpcRequest>, Callbacks) {
+    callbacks: &[(UnboundedSender<JsonRpcRequest>, Callbacks)],
+) -> &(UnboundedSender<JsonRpcRequest>, Callbacks) {
     let mut rng = rand::thread_rng();
     let index = rng.gen_range(0..callbacks.len());
     &callbacks[index]
 }
 
 async fn handle_post(
-    Extension(callbacks): Extension<Vec<(mpsc::UnboundedSender<JsonRpcRequest>, Callbacks)>>,
+    Extension(callbacks): Extension<Vec<(UnboundedSender<JsonRpcRequest>, Callbacks)>>,
+    Extension(cache): Extension<MokaCache>,
     headers: HeaderMap,
     Path(method): Path<String>,
     body: Option<Json<Value>>,
@@ -225,12 +187,12 @@ async fn handle_post(
     let sender = item.0.clone();
     let calls = item.1.clone();
     let r = match body {
-        None => handle_request(sender, calls, headers, method, vec![]).await,
+        None => handle_request(cache, sender, calls, headers, method, vec![]).await,
         Some(v) => match v.0.get("params") {
-            None => handle_request(sender, calls, headers, method, vec![]).await,
+            None => handle_request(cache, sender, calls, headers, method, vec![]).await,
             Some(v) => {
                 let x = v.as_array().unwrap();
-                handle_request(sender, calls, headers, method, x.clone()).await
+                handle_request(cache, sender, calls, headers, method, x.clone()).await
             }
         },
     };
@@ -238,7 +200,8 @@ async fn handle_post(
 }
 
 async fn handle_request(
-    ws_tx: mpsc::UnboundedSender<JsonRpcRequest>,
+    cache: MokaCache,
+    ws_tx: UnboundedSender<JsonRpcRequest>,
     callbacks: Callbacks,
     headers: HeaderMap,
     method: String,
@@ -246,10 +209,19 @@ async fn handle_request(
 ) -> R {
     let id = get_next_id();
     let addr = maybe_ip_from_headers(&headers);
-    info!(
-        "{} => {}, {}({:?})",
-        &addr, &id, &method, &params
-    );
+    let cache_key = to_cache_key(&method, &params);
+    let use_cache = method != "blockchain.atomicals.get_global";
+    if use_cache {
+        let cache_value = cache.get(&cache_key).await;
+        if let Some(v) = cache_value {
+            info!(
+                "{} => {}, {}({:?}) matched cache({})",
+                &addr, &id, &method, &params, &cache_key
+            );
+            return v.clone();
+        }
+    }
+    info!("{} => {}, {}({:?})", &addr, &id, &method, &params);
     let (response_tx, response_rx) = oneshot::channel();
     {
         callbacks.write().await.insert(id, response_tx);
@@ -259,7 +231,11 @@ async fn handle_request(
     match tokio::time::timeout(Duration::from_secs(*RESPONSE_TIMEOUT), response_rx).await {
         Ok(Ok(rep)) => {
             if let Some(result) = rep.result {
-                R::ok(result)
+                let r = R::ok(result);
+                if use_cache {
+                    cache.insert(cache_key, r.clone()).await;
+                }
+                r
             } else if let Some(err) = rep.error {
                 let err = err.as_object().unwrap();
                 R {
@@ -287,7 +263,7 @@ async fn handle_request(
 }
 
 async fn handle_health(
-    Extension(callbacks): Extension<Vec<(mpsc::UnboundedSender<JsonRpcRequest>, Callbacks)>>,
+    Extension(callbacks): Extension<Vec<(UnboundedSender<JsonRpcRequest>, Callbacks)>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     let id = get_next_id();
@@ -331,7 +307,7 @@ async fn handle_proxy() -> impl IntoResponse {
                 "GET": "GET /proxy/:method?params=[\"value1\"] with string encoded array in the query argument \"params\" in the URL."
             },
             "healthCheck": "GET /proxy/health",
-            "github": "https://github.com/AstroxNetwork/elex-proxy",
+            "github": "https://github.com/WizzWallet/elex-proxy",
             "license": "MIT"
         }
     }))
@@ -356,6 +332,8 @@ fn handle_panic(err: Box<dyn Any + Send + 'static>) -> http::Response<Full<Bytes
         .unwrap()
 }
 
+type MokaCache = Cache<u64, R>;
+
 #[tokio::main]
 async fn main() {
     dotenv().ok();
@@ -375,6 +353,11 @@ async fn main() {
         calls.push((ws_tx, callbacks.clone()));
         try_new_client(i, callbacks, ws_rx_stream);
     }
+    let cache: MokaCache = Cache::builder()
+        .max_capacity(*MAX_CACHE_ENTRIES)
+        .time_to_live(Duration::from_secs(*CACHE_TIME_TO_LIVE))
+        .time_to_idle(Duration::from_secs(*CACHE_TIME_TO_IDLE))
+        .build();
     let app = Router::new()
         .fallback(|uri: http::Uri| async move {
             let body = R::error(-1, format!("No route: {}", &uri));
@@ -386,6 +369,8 @@ async fn main() {
                 .unwrap()
         })
         .route("/", get(|| async { "Hello, Atomicals!" }))
+        // .route("/urn/:urn/:res", get(handle_urn_with_res))
+        // .route("/urn/:urn", get(handle_urn))
         .route("/proxy", get(handle_proxy).post(handle_proxy))
         .route("/proxy/health", get(handle_health).post(handle_health))
         .route("/proxy/:method", get(handle_get).post(handle_post))
@@ -396,7 +381,49 @@ async fn main() {
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
-        .layer(Extension(calls.clone()));
+        .layer(Extension(calls.clone()))
+        .layer(Extension(cache.clone()));
+    let block_height = AtomicU64::new(0);
+    tokio::spawn(async move {
+        loop {
+            let vec1 = calls.clone();
+            let callback = random_callback(&vec1);
+            let r = handle_request(
+                cache.clone(),
+                callback.0.clone(),
+                callback.1.clone(),
+                HeaderMap::new(),
+                "blockchain.atomicals.get_global".into(),
+                vec![],
+            )
+            .await;
+            if let Some(v) = r.response {
+                if v.is_object() {
+                    let height = v
+                        .as_object()
+                        .unwrap()
+                        .get("global")
+                        .unwrap()
+                        .as_object()
+                        .unwrap()
+                        .get("height")
+                        .unwrap()
+                        .as_u64()
+                        .unwrap();
+                    if block_height.load(Ordering::SeqCst) != height {
+                        block_height.store(height, Ordering::SeqCst);
+                        info!("New block height: {}, invalidate all cache", height);
+                        // for i in 0..12 {
+                        //     tokio::time::sleep(Duration::from_secs(10)).await;
+                        //     info!("Invalidate all cache...{}", i);
+                        //     cache.invalidate_all();
+                        // }
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
     let listener = tokio::net::TcpListener::bind((*PROXY_HOST).clone())
         .await
         .unwrap();
@@ -410,7 +437,7 @@ async fn main() {
 }
 
 fn new_callbacks() -> (
-    mpsc::UnboundedSender<JsonRpcRequest>,
+    UnboundedSender<JsonRpcRequest>,
     Callbacks,
     Arc<Mutex<UnboundedReceiverStream<JsonRpcRequest>>>,
 ) {
@@ -456,7 +483,10 @@ fn try_new_client(
                                         info!("WS-{} <= {}, Request matched", ins, &resp.id);
                                         let _ = callback.send(resp);
                                     } else {
-                                        warn!("WS-{} <= {}, No matching request found", ins, &resp.id);
+                                        warn!(
+                                            "WS-{} <= {}, No matching request found",
+                                            ins, &resp.id
+                                        );
                                     }
                                 } else {
                                     error!("WS-{} Failed to parse ws response: {}", ins, text);

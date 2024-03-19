@@ -30,8 +30,16 @@ IP_LIMIT_BURST_SIZE=10
 ELECTRUMX_WS_INSTANCE=5
 # Default 500, maximum concurrent connections
 CONCURRENCY_LIMIT=500
-# Default 10, timeout for receiving WebSocket messages
+# Default 10s, timeout for receiving WebSocket messages
 RESPONSE_TIMEOUT=10
+
+# Default 10000, max cache entry
+MAX_CACHE_ENTRIES=10000
+# Default 480s, cache max live time
+CACHE_TIME_TO_LIVE=480
+# Default 60s, cache idle time, if no access, cache will be removed
+CACHE_TIME_TO_IDLE=60
+
 RUST_LOG=info
 ```
 
@@ -45,6 +53,9 @@ Adjust these values as needed. Here's a brief explanation of the configuration p
 - `ELECTRUMX_WS_INSTANCE`: Concurrently running ws instances, can improve throughput, set as needed.
 - `CONCURRENCY_LIMIT`: Maximum allowed concurrent connections.
 - `RESPONSE_TIMEOUT`: Timeout for receiving WebSocket messages.
+- `MAX_CACHE_ENTRIES`: Maximum cache entry.
+- `CACHE_TIME_TO_LIVE`: Cache max live time.
+- `CACHE_TIME_TO_IDLE`: Cache idle time, if no access, cache will be removed.
 - `RUST_LOG`: Log level for Rust logging framework. Options include `trace`, `debug`, `info`, `warn`, and `error`.
 
 #### Usage

@@ -32,6 +32,14 @@ ELECTRUMX_WS_INSTANCE=5
 CONCURRENCY_LIMIT=500
 # 默认 10，接收 WebSocket 消息的超时时间
 RESPONSE_TIMEOUT=10
+
+# 默认 10000, 最大的缓存数量
+MAX_CACHE_ENTRIES=10000
+# 默认 480s, 缓存最大存活时间
+CACHE_TIME_TO_LIVE=480
+# 默认 60s, 缓存空闲时间，如果没有访问，缓存将被移除
+CACHE_TIME_TO_IDLE=60
+
 RUST_LOG=info
 ```
 
@@ -45,6 +53,9 @@ RUST_LOG=info
 - `ELECTRUMX_WS_INSTANCE`：同时运行的 ws 实例，可以提高吞吐量，按需设置。
 - `CONCURRENCY_LIMIT`：允许的最大并发连接数。
 - `RESPONSE_TIMEOUT`：接收 WebSocket 消息的超时时间。
+- `MAX_CACHE_ENTRIES`：最大的缓存数量。
+- `CACHE_TIME_TO_LIVE`：缓存最大存活时间。
+- `CACHE_TIME_TO_IDLE`：缓存空闲时间，如果没有访问，缓存将被移除。
 - `RUST_LOG`：Rust 日志框架的日志级别。选项包括 `trace`、`debug`、`info`、`warn` 和 `error`。
 
 #### 使用

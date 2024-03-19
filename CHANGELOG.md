@@ -1,3 +1,7 @@
+## 0.1.6
+
+- Added support for request caching to reduce indexer access and improve performance.
+
 ## 0.1.5
 
 - Allow configuring the number of concurrently running WebSocket instances to improve throughput.
