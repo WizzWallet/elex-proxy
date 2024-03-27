@@ -20,14 +20,14 @@ struct Info {
     health_check: String,
     github: String,
     license: String,
-    version: Version,
+    build: Build,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct Version {
+struct Build {
     version: String,
     #[serde(rename = "buildAt")]
-    build_at: String,
+    timestamp: String,
     #[serde(rename = "target")]
     target: String,
     #[serde(rename = "rustc")]
@@ -53,9 +53,9 @@ pub static PROXY_RESPONSE: LazyLock<Response> = LazyLock::new(|| {
         health_check: "GET /proxy/health".to_string(),
         github: "https://github.com/WizzWallet/elex-proxy".to_string(),
         license: "MIT".to_string(),
-        version: Version {
+        build: Build {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            build_at: env!("VERGEN_BUILD_TIMESTAMP").to_string(),
+            timestamp: env!("VERGEN_BUILD_TIMESTAMP").to_string(),
             target: env!("VERGEN_CARGO_TARGET_TRIPLE").to_string(),
             rustc: env!("VERGEN_RUSTC_SEMVER").to_string(),
         },

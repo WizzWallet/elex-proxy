@@ -38,7 +38,7 @@ use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::cache::to_cache_key;
 use crate::envs::{
@@ -399,6 +399,7 @@ fn try_new_client(
                         let mut guard = ws_rx_stream.lock().await;
                         while let Some(message) = guard.next().await {
                             let request_text = serde_json::to_string(&message).unwrap();
+                            debug!("WS-{} Request sent: {}", ins, &request_text);
                             if let Err(e) = write.send(Message::Text(request_text)).await {
                                 error!("WS-{} Failed to send message to ElectrumX: {:?}", ins, e);
                                 break;
@@ -408,23 +409,24 @@ fn try_new_client(
                     while let Some(Ok(msg)) = read.next().await {
                         if msg.is_text() {
                             if let Ok(text) = msg.to_text() {
+                                debug!("WS-{} Response received: {}", ins, text);
                                 if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(text) {
                                     if let Some(callback) = callbacks.write().await.remove(&resp.id)
                                     {
                                         info!("WS-{} <= {}, Request matched", ins, &resp.id);
                                         let _ = callback.send(resp);
                                     } else if resp.id == 0 {
-                                        info!("WS-{} <= {:?}, Ignore response", ins, &resp);
+                                        info!("WS-{} Ignore response: {}", ins, text);
                                     } else {
                                         warn!(
-                                            "WS-{} <= {:?}, No matching request found",
-                                            ins, &resp
+                                            "WS-{} No matching request found: {}",
+                                            ins, text
                                         );
                                     }
                                 } else {
                                     match serde_json::from_str::<JsonRpcRequest>(text) {
                                         Ok(req) => {
-                                            info!("WS-{} <= {}, Request received", ins, text);
+                                            debug!("WS-{} Remote request received: {}", ins, text);
                                             if req.method == "blockchain.headers.subscribe" {
                                                 let new_height = req.params.first().map(|v| {
                                                     if let Some(v) = v.as_object() {
@@ -452,7 +454,7 @@ fn try_new_client(
                                         }
                                         Err(e) => {
                                             error!(
-                                                "WS-{} <= {}, Failed to parse ws response: {:?}",
+                                                "WS-{} Failed to parse ws response: {}, {:?}",
                                                 ins, text, e,
                                             );
                                         }
