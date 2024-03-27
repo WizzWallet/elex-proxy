@@ -1,5 +1,4 @@
-
-
+use std::collections::HashSet;
 use std::env;
 use std::sync::LazyLock;
 
@@ -69,7 +68,15 @@ pub static CACHE_TIME_TO_LIVE: LazyLock<u64> = LazyLock::new(|| {
 
 pub static CACHE_TIME_TO_IDLE: LazyLock<u64> = LazyLock::new(|| {
     env::var("CACHE_TIME_TO_IDLE")
-        .unwrap_or("60".to_string())
+        .unwrap_or("90".to_string())
         .parse()
         .unwrap()
+});
+
+pub static NO_CACHE_METHODS: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    env::var("NO_CACHE_METHODS")
+        .unwrap_or("blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee".to_string())
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect()
 });

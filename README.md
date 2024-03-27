@@ -38,7 +38,9 @@ MAX_CACHE_ENTRIES=10000
 # Default 480s, cache max live time
 CACHE_TIME_TO_LIVE=480
 # Default 60s, cache idle time, if no access, cache will be removed
-CACHE_TIME_TO_IDLE=60
+CACHE_TIME_TO_IDLE=90
+# no cache methods, use comma to separate multiple methods, default "blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee"
+NO_CACHE_METHODS=blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee
 
 RUST_LOG=info
 ```
@@ -56,6 +58,7 @@ Adjust these values as needed. Here's a brief explanation of the configuration p
 - `MAX_CACHE_ENTRIES`: Maximum cache entry.
 - `CACHE_TIME_TO_LIVE`: Cache max live time.
 - `CACHE_TIME_TO_IDLE`: Cache idle time, if no access, cache will be removed.
+- `NO_CACHE_METHODS`: No cache methods, use comma to separate multiple methods.
 - `RUST_LOG`: Log level for Rust logging framework. Options include `trace`, `debug`, `info`, `warn`, and `error`.
 
 #### Usage

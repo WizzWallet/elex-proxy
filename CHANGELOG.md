@@ -1,3 +1,7 @@
+## 0.1.7
+
+- Added support for real-time caching.
+
 ## 0.1.6
 
 - Added support for request caching to reduce indexer access and improve performance.

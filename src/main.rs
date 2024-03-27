@@ -3,21 +3,20 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
-use axum::body::Body;
+use axum::extract::{Path, Query};
 use axum::extract::Extension;
 use axum::extract::Json;
-use axum::extract::{Path, Query};
 use axum::http;
-use axum::http::StatusCode;
 use axum::http::{header, HeaderMap};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 use bytes::Bytes;
 use dotenv::dotenv;
 use futures::{SinkExt, StreamExt};
@@ -25,18 +24,17 @@ use http_body_util::Full;
 use moka::future::Cache;
 use once_cell::sync::Lazy;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Number, Value};
-use tokio::sync::mpsc::UnboundedSender;
+use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::{Mutex, RwLock};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_governor::GovernorLayer;
+use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -44,104 +42,31 @@ use tracing::{error, info, warn};
 
 use crate::cache::to_cache_key;
 use crate::envs::{
-    CACHE_TIME_TO_IDLE, CACHE_TIME_TO_LIVE, CONCURRENCY_LIMIT, ELECTRUMX_WSS,
-    ELECTRUMX_WS_INSTANCE, IP_LIMIT_BURST_SIZE, IP_LIMIT_PER_MILLS, MAX_CACHE_ENTRIES, PROXY_HOST,
-    RESPONSE_TIMEOUT,
+    CACHE_TIME_TO_IDLE, CACHE_TIME_TO_LIVE, CONCURRENCY_LIMIT, ELECTRUMX_WS_INSTANCE,
+    ELECTRUMX_WSS, IP_LIMIT_BURST_SIZE, IP_LIMIT_PER_MILLS, MAX_CACHE_ENTRIES,
+    NO_CACHE_METHODS, PROXY_HOST, RESPONSE_TIMEOUT,
 };
 use crate::ip::maybe_ip_from_headers;
-use crate::urn::{handle_urn, handle_urn_with_res};
+use crate::proxy::PROXY_RESPONSE;
+use crate::structs::{AppError, Callbacks, JsonRpcRequest, JsonRpcResponse, MokaCache, R};
 
 mod cache;
 mod envs;
 mod ip;
+mod proxy;
+mod structs;
 mod urn;
 
-#[derive(Serialize)]
-struct JsonRpcRequest {
-    method: String,
-    params: Vec<Value>,
-    id: u32,
-}
-
-#[derive(Deserialize)]
-struct JsonRpcResponse {
-    result: Option<Value>,
-    error: Option<Value>,
-    id: u32,
-}
-
-#[derive(Serialize, Clone)]
-struct R {
-    success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    health: Option<bool>,
-}
-
-impl R {
-    fn ok(payload: Value) -> Self {
-        Self {
-            success: true,
-            response: Some(payload),
-            code: None,
-            message: None,
-            health: None,
-        }
-    }
-    fn error(code: i32, message: String) -> Self {
-        Self {
-            success: false,
-            response: None,
-            code: Some(Value::Number(Number::from(code))),
-            message: Some(Value::String(message)),
-            health: None,
-        }
-    }
-    fn health(health: bool) -> Self {
-        Self {
-            success: true,
-            response: None,
-            code: None,
-            message: None,
-            health: Some(health),
-        }
-    }
-}
-
 // The use of `AtomicU32` is to ensure not exceeding the integer range of other systems.
-static ID_COUNTER: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
+static ID_COUNTER: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1));
+static CACHED_BLOCK_HEIGHT: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 
 fn get_next_id() -> u32 {
     // Reset the counter when it reaches the maximum value.
     if ID_COUNTER.load(Ordering::SeqCst) == u32::MAX {
-        ID_COUNTER.store(0, Ordering::SeqCst);
+        ID_COUNTER.store(1, Ordering::SeqCst);
     }
     ID_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
-
-type Callbacks = Arc<RwLock<HashMap<u32, oneshot::Sender<JsonRpcResponse>>>>;
-
-struct AppError(anyhow::Error);
-
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let value = R::error(-1, self.0.to_string());
-        Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Body::from(serde_json::to_string(&value).unwrap()))
-            .unwrap()
-    }
-}
-
-impl IntoResponse for R {
-    fn into_response(self) -> Response {
-        Json(self).into_response()
-    }
 }
 
 async fn handle_get(
@@ -210,15 +135,17 @@ async fn handle_request(
     let id = get_next_id();
     let addr = maybe_ip_from_headers(&headers);
     let cache_key = to_cache_key(&method, &params);
-    let use_cache = method != "blockchain.atomicals.get_global";
-    if use_cache {
-        let cache_value = cache.get(&cache_key).await;
-        if let Some(v) = cache_value {
+    let no_cache = NO_CACHE_METHODS.contains(&method);
+    if !no_cache && cache.contains_key(&cache_key) {
+        if let Some(v) = cache.get(&cache_key).await {
             info!(
                 "{} => {}, {}({:?}) matched cache({})",
                 &addr, &id, &method, &params, &cache_key
             );
-            return v.clone();
+            return R {
+                cache: Some(true),
+                ..v
+            };
         }
     }
     info!("{} => {}, {}({:?})", &addr, &id, &method, &params);
@@ -226,13 +153,17 @@ async fn handle_request(
     {
         callbacks.write().await.insert(id, response_tx);
     }
-    let request = JsonRpcRequest { id, method, params };
+    let request = JsonRpcRequest {
+        id: Some(id),
+        method,
+        params,
+    };
     ws_tx.send(request).unwrap();
     match tokio::time::timeout(Duration::from_secs(*RESPONSE_TIMEOUT), response_rx).await {
         Ok(Ok(rep)) => {
             if let Some(result) = rep.result {
                 let r = R::ok(result);
-                if use_cache {
+                if !no_cache {
                     cache.insert(cache_key, r.clone()).await;
                 }
                 r
@@ -244,6 +175,7 @@ async fn handle_request(
                     message: err.get("message").cloned(),
                     response: None,
                     health: None,
+                    cache: None,
                 }
             } else {
                 R::error(-1, "No response".into())
@@ -276,7 +208,7 @@ async fn handle_health(
         item.1.write().await.insert(id, response_tx);
     }
     let request = JsonRpcRequest {
-        id,
+        id: Some(id),
         method: "blockchain.atomicals.get_global".into(),
         params: vec![],
     };
@@ -297,20 +229,7 @@ async fn handle_health(
 }
 
 async fn handle_proxy() -> impl IntoResponse {
-    Json(json!({
-        "success": true,
-        "info": {
-            "note": "Atomicals ElectrumX Digital Object Proxy Online",
-            "usageInfo": {
-                "note": "The service offers both POST and GET requests for proxying requests to ElectrumX. To handle larger broadcast transaction payloads use the POST method instead of GET.",
-                "POST": "POST /proxy/:method with string encoded array in the field \"params\" in the request body. ",
-                "GET": "GET /proxy/:method?params=[\"value1\"] with string encoded array in the query argument \"params\" in the URL."
-            },
-            "healthCheck": "GET /proxy/health",
-            "github": "https://github.com/WizzWallet/elex-proxy",
-            "license": "MIT"
-        }
-    }))
+    Json(PROXY_RESPONSE.clone())
 }
 
 fn handle_panic(err: Box<dyn Any + Send + 'static>) -> http::Response<Full<Bytes>> {
@@ -332,8 +251,6 @@ fn handle_panic(err: Box<dyn Any + Send + 'static>) -> http::Response<Full<Bytes
         .unwrap()
 }
 
-type MokaCache = Cache<u64, R>;
-
 #[tokio::main]
 async fn main() {
     dotenv().ok();
@@ -347,17 +264,17 @@ async fn main() {
             .finish()
             .unwrap(),
     );
-    let mut calls = vec![];
-    for i in 0..*ELECTRUMX_WS_INSTANCE {
-        let (ws_tx, callbacks, ws_rx_stream) = new_callbacks();
-        calls.push((ws_tx, callbacks.clone()));
-        try_new_client(i, callbacks, ws_rx_stream);
-    }
     let cache: MokaCache = Cache::builder()
         .max_capacity(*MAX_CACHE_ENTRIES)
         .time_to_live(Duration::from_secs(*CACHE_TIME_TO_LIVE))
         .time_to_idle(Duration::from_secs(*CACHE_TIME_TO_IDLE))
         .build();
+    let mut calls = vec![];
+    for i in 0..*ELECTRUMX_WS_INSTANCE {
+        let (ws_tx, callbacks, ws_rx_stream) = new_callbacks();
+        calls.push((ws_tx.clone(), callbacks.clone()));
+        try_new_client(i, callbacks, ws_rx_stream, cache.clone());
+    }
     let app = Router::new()
         .fallback(|uri: http::Uri| async move {
             let body = R::error(-1, format!("No route: {}", &uri));
@@ -383,11 +300,10 @@ async fn main() {
         .layer(CorsLayer::permissive())
         .layer(Extension(calls.clone()))
         .layer(Extension(cache.clone()));
-    let block_height = AtomicU64::new(0);
     tokio::spawn(async move {
+        let cloned_calls = calls.clone();
         loop {
-            let vec1 = calls.clone();
-            let callback = random_callback(&vec1);
+            let callback = random_callback(&cloned_calls);
             let r = handle_request(
                 cache.clone(),
                 callback.0.clone(),
@@ -410,14 +326,14 @@ async fn main() {
                         .unwrap()
                         .as_u64()
                         .unwrap();
-                    if block_height.load(Ordering::SeqCst) != height {
-                        block_height.store(height, Ordering::SeqCst);
-                        info!("New block height: {}, invalidate all cache", height);
-                        // for i in 0..12 {
-                        //     tokio::time::sleep(Duration::from_secs(10)).await;
-                        //     info!("Invalidate all cache...{}", i);
-                        //     cache.invalidate_all();
-                        // }
+                    if CACHED_BLOCK_HEIGHT.load(Ordering::SeqCst) != height {
+                        CACHED_BLOCK_HEIGHT.store(height, Ordering::SeqCst);
+                        cache.invalidate_all();
+                        info!(
+                            "New block height by loop: {}, invalidate all cache: {} entries",
+                            height,
+                            cache.entry_count()
+                        );
                     }
                 }
             }
@@ -451,6 +367,7 @@ fn try_new_client(
     ins: u32,
     callbacks: Callbacks,
     ws_rx_stream: Arc<Mutex<UnboundedReceiverStream<JsonRpcRequest>>>,
+    cache: MokaCache,
 ) {
     tokio::spawn(async move {
         let list = ELECTRUMX_WSS.split(',').collect::<Vec<&str>>();
@@ -463,6 +380,20 @@ fn try_new_client(
                 Ok((ws, _)) => {
                     info!("WS-{} Connected to ElectrumX: {}", ins, &wss);
                     let (mut write, mut read) = ws.split();
+                    let subscribe_request = JsonRpcRequest {
+                        id: Some(0),
+                        method: "blockchain.headers.subscribe".into(),
+                        params: vec![],
+                    };
+                    let subscribe_result = write
+                        .send(Message::Text(
+                            serde_json::to_string(&subscribe_request).unwrap(),
+                        ))
+                        .await;
+                    if let Err(e) = subscribe_result {
+                        error!("WS-{} Failed to subscribe: {:?}", ins, e);
+                        continue;
+                    }
                     let ws_rx_stream = Arc::clone(&ws_rx_stream);
                     let send_handle = tokio::spawn(async move {
                         let mut guard = ws_rx_stream.lock().await;
@@ -482,14 +413,50 @@ fn try_new_client(
                                     {
                                         info!("WS-{} <= {}, Request matched", ins, &resp.id);
                                         let _ = callback.send(resp);
+                                    } else if resp.id == 0 {
+                                        info!("WS-{} <= {:?}, Ignore response", ins, &resp);
                                     } else {
                                         warn!(
-                                            "WS-{} <= {}, No matching request found",
-                                            ins, &resp.id
+                                            "WS-{} <= {:?}, No matching request found",
+                                            ins, &resp
                                         );
                                     }
                                 } else {
-                                    error!("WS-{} Failed to parse ws response: {}", ins, text);
+                                    match serde_json::from_str::<JsonRpcRequest>(text) {
+                                        Ok(req) => {
+                                            info!("WS-{} <= {}, Request received", ins, text);
+                                            if req.method == "blockchain.headers.subscribe" {
+                                                let new_height = req.params.first().map(|v| {
+                                                    if let Some(v) = v.as_object() {
+                                                        if let Some(height) = v.get("height") {
+                                                            return height.as_u64();
+                                                        }
+                                                    }
+                                                    None
+                                                });
+                                                if let Some(Some(height)) = new_height {
+                                                    if CACHED_BLOCK_HEIGHT.load(Ordering::SeqCst)
+                                                        != height
+                                                    {
+                                                        CACHED_BLOCK_HEIGHT
+                                                            .store(height, Ordering::SeqCst);
+                                                        cache.invalidate_all();
+                                                        info!(
+                                    "New block height by subscribe: {}, invalidate all cache: {} entries",
+                                    height,
+                                    cache.entry_count()
+                                );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "WS-{} <= {}, Failed to parse ws response: {:?}",
+                                                ins, text, e,
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         } else if msg.is_close() {

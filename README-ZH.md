@@ -37,8 +37,10 @@ RESPONSE_TIMEOUT=10
 MAX_CACHE_ENTRIES=10000
 # 默认 480s, 缓存最大存活时间
 CACHE_TIME_TO_LIVE=480
-# 默认 60s, 缓存空闲时间，如果没有访问，缓存将被移除
-CACHE_TIME_TO_IDLE=60
+# 默认 90s, 缓存空闲时间，如果没有访问，缓存将被移除
+CACHE_TIME_TO_IDLE=90
+# 不启用缓存的方法, 用逗号区分多个方法，默认值 "blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee"
+NO_CACHE_METHODS=blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee
 
 RUST_LOG=info
 ```
@@ -56,6 +58,7 @@ RUST_LOG=info
 - `MAX_CACHE_ENTRIES`：最大的缓存数量。
 - `CACHE_TIME_TO_LIVE`：缓存最大存活时间。
 - `CACHE_TIME_TO_IDLE`：缓存空闲时间，如果没有访问，缓存将被移除。
+- `NO_CACHE_METHODS`：不启用缓存的方法，用逗号区分多个方法。
 - `RUST_LOG`：Rust 日志框架的日志级别。选项包括 `trace`、`debug`、`info`、`warn` 和 `error`。
 
 #### 使用
