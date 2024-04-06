@@ -1,3 +1,7 @@
+## 0.2.0
+
+- Added support for atomicals URN resolution.
+
 ## 0.1.7
 
 - Added support for real-time caching.

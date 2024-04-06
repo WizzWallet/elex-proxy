@@ -35,10 +35,10 @@ RESPONSE_TIMEOUT=10
 
 # Default 10000, max cache entry
 MAX_CACHE_ENTRIES=10000
-# Default 480s, cache max live time
-CACHE_TIME_TO_LIVE=480
-# Default 60s, cache idle time, if no access, cache will be removed
-CACHE_TIME_TO_IDLE=90
+# Default 600s, cache max live time
+CACHE_TIME_TO_LIVE=600
+# Default 180s, cache idle time, if no access, cache will be removed
+CACHE_TIME_TO_IDLE=180
 # no cache methods, use comma to separate multiple methods, default "blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee"
 NO_CACHE_METHODS=blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee
 

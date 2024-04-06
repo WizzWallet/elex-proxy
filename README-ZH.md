@@ -35,10 +35,10 @@ RESPONSE_TIMEOUT=10
 
 # 默认 10000, 最大的缓存数量
 MAX_CACHE_ENTRIES=10000
-# 默认 480s, 缓存最大存活时间
-CACHE_TIME_TO_LIVE=480
-# 默认 90s, 缓存空闲时间，如果没有访问，缓存将被移除
-CACHE_TIME_TO_IDLE=90
+# 默认 600s, 缓存最大存活时间
+CACHE_TIME_TO_LIVE=600
+# 默认 180s, 缓存空闲时间，如果没有访问，缓存将被移除
+CACHE_TIME_TO_IDLE=180
 # 不启用缓存的方法, 用逗号区分多个方法，默认值 "blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee"
 NO_CACHE_METHODS=blockchain.atomicals.get_global,blockchain.estimatefee,blockchain.scripthash.subscribe,blockchain.transaction.broadcast,server.peers.subscribe,server.ping,mempool.get_fee_histogram,blockchain.atomicals.dump,blockchain.scripthash.unsubscribe,blockchain.relayfee
 
