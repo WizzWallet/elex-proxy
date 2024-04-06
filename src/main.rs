@@ -3,20 +3,20 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path, Query};
 use axum::extract::Extension;
 use axum::extract::Json;
+use axum::extract::{Path, Query};
 use axum::http;
-use axum::http::{header, HeaderMap};
 use axum::http::StatusCode;
+use axum::http::{header, HeaderMap};
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum::Router;
 use axum::routing::get;
+use axum::Router;
 use bytes::Bytes;
 use dotenv::dotenv;
 use futures::{SinkExt, StreamExt};
@@ -25,16 +25,16 @@ use moka::future::Cache;
 use once_cell::sync::Lazy;
 use rand::Rng;
 use serde_json::Value;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::{Mutex, RwLock};
-use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::GovernorLayer;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
+use tower_governor::GovernorLayer;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -42,13 +42,14 @@ use tracing::{debug, error, info, warn};
 
 use crate::cache::to_cache_key;
 use crate::envs::{
-    CACHE_TIME_TO_IDLE, CACHE_TIME_TO_LIVE, CONCURRENCY_LIMIT, ELECTRUMX_WS_INSTANCE,
-    ELECTRUMX_WSS, IP_LIMIT_BURST_SIZE, IP_LIMIT_PER_MILLS, MAX_CACHE_ENTRIES,
+    CACHE_TIME_TO_IDLE, CACHE_TIME_TO_LIVE, CONCURRENCY_LIMIT, ELECTRUMX_WSS,
+    ELECTRUMX_WS_INSTANCE, IP_LIMIT_BURST_SIZE, IP_LIMIT_PER_MILLS, MAX_CACHE_ENTRIES,
     NO_CACHE_METHODS, PROXY_HOST, RESPONSE_TIMEOUT,
 };
 use crate::ip::maybe_ip_from_headers;
 use crate::proxy::PROXY_RESPONSE;
 use crate::structs::{AppError, Callbacks, JsonRpcRequest, JsonRpcResponse, MokaCache, R};
+use crate::urn::handle_urn;
 
 mod cache;
 mod envs;
@@ -286,8 +287,7 @@ async fn main() {
                 .unwrap()
         })
         .route("/", get(|| async { "Hello, Atomicals!" }))
-        // .route("/urn/:urn/:res", get(handle_urn_with_res))
-        // .route("/urn/:urn", get(handle_urn))
+        .route("/urn/*urn", get(handle_urn))
         .route("/proxy", get(handle_proxy).post(handle_proxy))
         .route("/proxy/health", get(handle_health).post(handle_health))
         .route("/proxy/:method", get(handle_get).post(handle_post))
@@ -418,10 +418,7 @@ fn try_new_client(
                                     } else if resp.id == 0 {
                                         info!("WS-{} Ignore response: {}", ins, text);
                                     } else {
-                                        warn!(
-                                            "WS-{} No matching request found: {}",
-                                            ins, text
-                                        );
+                                        warn!("WS-{} No matching request found: {}", ins, text);
                                     }
                                 } else {
                                     match serde_json::from_str::<JsonRpcRequest>(text) {

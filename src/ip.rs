@@ -7,7 +7,6 @@ use forwarded_header_value::{ForwardedHeaderValue, Identifier};
 const X_REAL_IP: &str = "x-real-ip";
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
-
 pub fn maybe_ip_from_headers(headers: &HeaderMap) -> String {
     maybe_x_forwarded_for(headers)
         .or_else(|| maybe_x_real_ip(headers))
@@ -15,7 +14,6 @@ pub fn maybe_ip_from_headers(headers: &HeaderMap) -> String {
         .map(|ip| ip.to_string())
         .unwrap_or("unknown ip".to_string())
 }
-
 
 fn maybe_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
     headers

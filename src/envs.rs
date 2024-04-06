@@ -61,14 +61,14 @@ pub static MAX_CACHE_ENTRIES: LazyLock<u64> = LazyLock::new(|| {
 
 pub static CACHE_TIME_TO_LIVE: LazyLock<u64> = LazyLock::new(|| {
     env::var("CACHE_TIME_TO_LIVE")
-        .unwrap_or("480".to_string())
+        .unwrap_or("600".to_string())
         .parse()
         .unwrap()
 });
 
 pub static CACHE_TIME_TO_IDLE: LazyLock<u64> = LazyLock::new(|| {
     env::var("CACHE_TIME_TO_IDLE")
-        .unwrap_or("90".to_string())
+        .unwrap_or("180".to_string())
         .parse()
         .unwrap()
 });
