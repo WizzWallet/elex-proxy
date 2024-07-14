@@ -256,7 +256,7 @@ fn handle_panic(err: Box<dyn Any + Send + 'static>) -> http::Response<Full<Bytes
 async fn main() {
     dotenv().ok();
     tracing_subscriber::fmt::init();
-    let governor_conf = Box::new(
+    let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_millisecond(*IP_LIMIT_PER_MILLS)
             .burst_size(*IP_LIMIT_BURST_SIZE)
@@ -292,7 +292,7 @@ async fn main() {
         .route("/proxy/health", get(handle_health).post(handle_health))
         .route("/proxy/:method", get(handle_get).post(handle_post))
         .layer(GovernorLayer {
-            config: Box::leak(governor_conf),
+            config: governor_conf,
         })
         .layer(ConcurrencyLimitLayer::new(*CONCURRENCY_LIMIT))
         .layer(CatchPanicLayer::custom(handle_panic))
